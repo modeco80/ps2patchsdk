@@ -54,13 +54,19 @@ def main(args: Arguments):
 	with open(args.originalElfPath, 'rb') as f:
 		origElfData = f.read()
 
-	# Patch the ELF to inject the patch core as a new PT_LOAD program header.
+	# Patch the ELF to inject the patch core.
 	# We do this outside of LIEF because LIEF can't do this in place, and it's
 	# out-of-place injection moves the section load addresses, which breaks the executable.
-	patched = PatchInjector.injectOverwriteLastPHDR(origElfData, patchCore, patchCoreEntry)
+	match args.patchInjectKind:
+		case PatchInjectCoreKind.OVERWRITE_LAST_PHDR:
+			injectedElf = PatchInjector.injectOverwriteLastPHDR(origElfData, patchCore, patchCoreEntry)
+		case PatchInjectCoreKind.INJECT_NEW_PHDR:
+			injectedElf = PatchInjector.injectCreateNewPHDR(origElfData, patchCore, patchCoreEntry)
+		case _:
+			raise ValueError('Unknown patch injection kind????')
 
 	# Once the patch core is injeted, we can use LIEF to perform the rest of our patches.
-	liefBinary = lief.parse(patched)
+	liefBinary = lief.parse(injectedElf)
 
 	# Patch the program break (heap start) to be ahead of the core, so that memory allocations do not overwrite
 	# the patch code core. Not doing this would cause errors and eventually a crash, so it is quite important!

@@ -14,7 +14,108 @@ PF_R = 4
 
 __all__ = ['PatchInjector']
 
+def elf32SanityChecks(ehdr):
+	e_ident = ehdr[0]
+	e_phoff = ehdr[5]
+	e_phentsize = ehdr[9]
+	e_phnum = ehdr[10]
+
+	# Sanity checks.
+	if e_ident[:4] != b"\x7fELF":
+		raise ValueError("stupidass")
+
+	if e_ident[4] != 1:
+		raise ValueError("Not an ELF32. What are we doing here")
+
+	if e_ident[5] != 1:
+		raise ValueError("ok you're just being silly on purpose now")
+
+	if e_phentsize != ELF32_PHDR_SIZE:
+		raise ValueError(
+			f"Incorrect program-header size of {e_phentsize:#x} in ELF file"
+		)
+
 class PatchInjector:
+	## Injects by creating a new PHDR in free space.
+	def injectCreateNewPHDR(original: bytes, patchCore: bytes, patchVirtualLoad: int) -> bytes:
+		# Parse the ELF header.
+		ehdr = list(struct.unpack_from(ELF32_EHDR_FMT, original, 0))
+
+		elf32SanityChecks(ehdr)
+
+		e_ident = ehdr[0]
+		e_phoff = ehdr[5]
+		e_phentsize = ehdr[9]
+		e_phnum = ehdr[10]
+
+
+		old_phdr_end = e_phoff + e_phnum * e_phentsize
+		new_phdr_end = e_phoff + (e_phnum + 1) * e_phentsize
+
+		# Find the first PT_LOAD PHDR.
+		first_load_offset = None
+		for i in range(e_phnum):
+			phoff = e_phoff + i * e_phentsize
+
+			ph = struct.unpack_from(
+				ELF32_PHDR_FMT,
+				original,
+				phoff,
+			)
+
+			p_type = ph[0]
+			p_offset = ph[1]
+
+			if p_type == PT_LOAD:
+				first_load_offset = p_offset
+				break
+
+		# Make sure there is actually enough space to expand the PHDR table
+		# in-place, and give up early if there is not.
+		if new_phdr_end > first_load_offset:
+			raise ValueError(
+				"Cannot expand the PHDR table in-place: "
+				f"Need through {new_phdr_end:#x}, "
+				f"and the first PT_LOAD begins at {first_load_offset:#x}"
+			)
+
+		align = 0x1000
+		vaddr_offset = patchVirtualLoad % align
+
+		blob_offset = len(original)
+
+		# Round the file end up while preserving the low bits of the virtual address.
+		if blob_offset % align <= vaddr_offset:
+			blob_offset += vaddr_offset - (blob_offset % align)
+		else:
+			blob_offset += align + vaddr_offset - (blob_offset % align)
+
+		# Create the new Elf32_Phdr
+		patch_phdr = struct.pack(
+			ELF32_PHDR_FMT,
+			PT_LOAD,					# p_type
+			blob_offset,				# p_offset
+			patchVirtualLoad,			# p_vaddr
+			patchVirtualLoad,			# p_paddr
+			len(patchCore),				# p_filesz
+			len(patchCore),				# p_memsz
+			PF_R | PF_W | PF_X,			# p_flags
+			align,						# p_align
+		)
+
+		result = bytearray(original)
+		struct.pack_into("<H", result, 0x2c, e_phnum + 1)
+
+		# Write the additional PHDR immediately after the existing PHDR.
+		result[old_phdr_end:new_phdr_end] = patch_phdr
+
+		if len(result) < blob_offset:
+			result.extend(b"\x00" * (blob_offset - len(result)))
+
+		# Append the actual code/data.
+		result.extend(patchCore)
+		return bytes(result)
+
 	### Injects core by overwriting a junk secondary PT_LOAD program header. Used for Metrowerks linker
 	### binaries, since they do not give enough space to make a new program header.
 	@staticmethod
@@ -22,25 +123,12 @@ class PatchInjector:
 		# Parse the ELF header.
 		ehdr = list(struct.unpack_from(ELF32_EHDR_FMT, original, 0))
 
+		elf32SanityChecks(ehdr)
+
 		e_ident = ehdr[0]
 		e_phoff = ehdr[5]
 		e_phentsize = ehdr[9]
 		e_phnum = ehdr[10]
-
-		# Sanity checks.
-		if e_ident[:4] != b"\x7fELF":
-			raise ValueError("stupidass")
-
-		if e_ident[4] != 1:
-			raise ValueError("Not an ELF32. What are we doing here")
-
-		if e_ident[5] != 1:
-			raise ValueError("ok you're just being silly on purpose now")
-
-		if e_phentsize != ELF32_PHDR_SIZE:
-			raise ValueError(
-				f"Incorrect program-header size of {e_phentsize:#x} in ELF file"
-			)
 
 		last_phdr_start = e_phoff + (e_phnum-1) * e_phentsize
 
