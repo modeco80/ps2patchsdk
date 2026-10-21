@@ -2,12 +2,12 @@
 
 import tempfile
 import subprocess
+import os
 
 from elftools.elf.elffile import ELFFile
 from elftools.elf.sections import Section, SymbolTableSection
 
-# FIXME: This should not be hardcoded!
-GCC_PATH = '../../tools/cc/2.96-ee-001003-1/'
+OBJCOPY_PATH = os.getenv("OBJCOPY")
 
 __all__ = [ 'ElfWrapper' ]
 
@@ -40,7 +40,7 @@ class ElfWrapper:
 		data = None
 		# I don't love this, but... hey, it works..
 		with tempfile.NamedTemporaryFile(prefix="mkpnach") as tmpFile:
-			result = subprocess.run(f'{GCC_PATH}/bin/ee-objcopy -O binary {self._elfFileName} {tmpFile.name}', shell=True, check=True)
+			result = subprocess.run(f'{OBJCOPY_PATH} -O binary {self._elfFileName} {tmpFile.name}', shell=True, check=True)
 			data = tmpFile.read()
 		return data
 

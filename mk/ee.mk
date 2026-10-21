@@ -10,6 +10,9 @@ OBJCOPY := $(EE_TOOLSDIR)/bin/ee-objcopy
 OBJDUMP := $(EE_TOOLSDIR)/bin/ee-objdump
 STRIP := $(EE_TOOLSDIR)/bin/ee-strip
 
+# Just to be nice. Some tools need it
+export OBJCOPY
+
 ML_INCLUDE := -I$(PATCHSDK)/src/ml/include
 
 CCFLAGS := -G0 -O3 -ffreestanding -nostdlib $(ML_INCLUDE) $(USER_CFLAGS)
